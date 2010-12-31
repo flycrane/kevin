@@ -1,0 +1,465 @@
+/** 
+ @mainpage SAL: The Simple Audio Library
+ <center>http://www.bookofhook.com/sal</center>
+ <hr>
+
+SAL is a simple, portable, easy-to-use, easy-to-integrate, flexible,
+open source audio library designed to allow you to rapidly generate
+basic stereo audio output on a wide range of systems.
+
+@ref Overview "Overview"
+
+@ref Architecture "Architecture"
+
+@ref Tutorial "A Quick Tutorial"
+
+@ref SourceDistro "Source Distribution"
+
+@ref FAQ "Frequently Answered Questions"
+
+@ref Verified "Verification and Testing"
+
+@ref License "License"
+
+@ref Contributors "Contributors"
+
+@ref Contact
+
+ */
+
+/**
+@page Overview
+
+@section Motivation Motivation
+
+The Simple Audio Library is a by-product of a book, Portable Software
+Development, that I authored in 2004.  While writing the book it
+became evident that I needed some real world case studies of some of
+the principles being discussed.  Originally I used fictitious code
+samples, but this was dangerous and limiting since the samples often
+could not be tested or even compiled.  Using example code from
+existing projects would have worked, but this would have proven
+cumbersome.  So in the end I decided to take a detour and write a
+quick little side project that demonstrated a lot of the concepts in
+the book -- that side project became the Simple Audio Library.
+
+As the name implies, SAL is a very simple audio library that performs
+the task of playing and mixing sounds together on different platforms.
+Currently Microsoft Windows (DirectSound and WAVEOUT); Linux (OSS and
+ALSA); and Apple Mac OS X (CoreAudio) are supported.  The goal was to
+hit a broad enough range of platforms (two compilers, five audio
+subsystems, two processor architectures, three operating systems) that
+I could demonstrate several techniques dealing with portable software
+development.
+
+@section Usability Usability
+
+Is SAL actually useful?  I think so, however since it wasn't really
+the focal point of the book, so it probably lacks some important
+features and isn't particularly well tested, however because of its
+nature it is very well documented and easy to maintain and read.  Bug
+reports and feature suggestions can be submitted to us at:
+
+sal@bookofhook.com
+
+@section Features Features
+
+SAL provides minimal functionality, but it does have one very
+important feature -- software mixing.  While a lot of APIs such as
+DirectSound, ALSA, OSS, and SDL_Mixer provide mixing facilities, I've
+found that many implementations of mixing are flaky (especially in
+early DirectSound implementations).  As a result I ended up writing my
+own software mixer and only relying on the hardware to play a fully
+mixed output buffer.  This greatly increased software robustness with
+the theoretical cost of some performance (i.e. inability to leverage
+optimized OS or hardware accelerated mixing).
+
+The basic feature set of SAL is:
+
+- output to underlying output device, defaulting to stereo 16-bit 44100Hz
+- software mixing of a user specified number of channels
+- simple parsing of WAV and AIFF files from memory.
+- voice management
+- simple volume and pan
+
+Notable features lacking, and well outside its scope, include:
+
+- 3D positioning (http://www.openal.org is an alternative)
+- Ogg Vorbis or MP3 support
+- streaming audio support (this would be easy to add however)
+*/
+
+/**
+@page Tutorial
+
+Integrating and using SAL is extremely simple (hence the name).  What
+SAL lacks in whiz bang features it makes up for in ease of use.
+
+@section CompilingSAL Adding SAL to Your Project
+
+If you haven't noticed, the SAL distribution does not include any
+Makefiles or IDE project files -- it doesn't need them.  Simple add
+all the .c, .h, and .m (on OS X) files in the src/ directory to your
+project, and you're 90% of the way there.  If you want to get fancy
+you can create a library from the source files, but I'll leave that as
+an exercise to the reader since that is platform and compiler
+specific.
+
+@subsection Windows Microsoft Windows
+
+On Windows you'll need to compile with multithreading enabled
+(e.g. under Microsoft Visual C++, make sure the Code Generation drop
+down has a multithreaded build selected).  You will also need to link
+to the Windows multimedia library (winmm.lib) and DirectSound
+(dsound.lib).
+
+@subsection OSX OS X
+
+Compiling for OS X requires linking to the Cocoa.Framework (for
+NSRecursiveLock support).
+
+@subsection Linux Linux
+
+Compiling for Linux requires linking to pthreads and ALSA via the
+-lpthread and -lasound command line options to GCC.
+
+@subsection CPP C++
+
+SAL can be compiled as C++ or as C depending on the needs of the
+project.
+
+@subsection General General
+
+Unless you want to specify absolute paths when including "sal.h",
+you'll want to ensure that sal/src is in your header search path.
+
+@section QueryingVersion Querying the Version
+
+Before doing anything you need to ensure that the version of SAL
+you're compiling with is the same as the version you are linking with
+(this is easy to get mismatched if, for example, you're linking to a
+DLL or shared object but compiling with newer headers).
+
+@code
+    if ( SAL_get_version() != SAL_VERSION )
+    {
+        fprintf( stderr, "Wrong version, found %x was expecting %x\n", SAL_get_version(), SAL_VERSION );
+        exit( 1 );
+    }
+@endcode
+
+@section CreatingDevice Creating a Device
+
+The fundamental sound management type in SAL is the SAL_Device, which
+represents a specific output device.  It also has context specific
+information, which provides for a degree of thread safety (there are
+no statics or globals in SAL, all such information is tied directly to
+the device context).
+
+To create a device you call SAL_create_device():
+@code
+SAL_Device *device;
+SAL_Callbacks cb;
+SAL_SystemParameters sp;
+sal_error_e err;
+
+    memset( &cb, 0, sizeof( cb ) );
+    cb.cb_size = sizeof( cb );
+    /* fill in cb here with user defined functions */
+
+    memset( &sp, 0, sizeof( sp ) );
+    sp.sp_size = sizeof( sp );
+        
+    err = SAL_create_device( &device, /* pointer to device */
+                             &cb,     /* callbacks */
+                             &sp,     /* system parameter information */
+                             2,       /* number of desired channels */
+                             16,      /* number of desired bits-per-sample */
+                             44100,   /* sample rate, in Hz */
+                             8 );     /* number of voices */
+
+    if ( err != SALERR_OK )
+    {
+       exit( 1 );
+    }
+@endcode
+
+The callbacks structure is an optional set of user-defined callbacks
+to handle memory management and warning/error reporting.  If you pass
+NULL, the default implementations will be used (malloc/free/fprintf).
+
+The system parameter structure contains platform specific flags and
+parameters that need to be passed to the device creation function.
+
+If you want the system to select a default format, pass 0 for
+channels, bits-per-sample, and sample rate.  Finally, each device can
+play up to "voices" number of simultaneous sounds.  You can specify as
+large a number as you desire, however SAL is not optimized for
+extremely large numbers of voices (e.g. > 256) since it just tracks a
+linear table.
+
+Once a device is created you can then load samples.
+
+@section CreatingSample Creating a Sample
+
+A sample in SAL is a raw set of sound data (or something that can
+generate a sound, e.g. a waveform synthesizer or a streaming audio
+source).
+
+The simplest way to create a sample is to load a WAV file and decode
+it directly into memory using the provided helper function.
+@code
+static
+SAL_Sample *
+load_sample( SAL_Device *device, const char *name )
+{
+    FILE *fp = 0;
+    unsigned char *buffer;
+    SAL_Sample *s = 0;
+    
+    if ( ( fp = fopen( name, "rb" ) ) != 0 )
+    {
+        
+        long l = flength( fp );
+        buffer = malloc( l );
+        
+        fread( buffer, l, 1, fp );
+        
+        if ( SALx_create_sample_from_wav( device, &s, buffer, l ) != SALERR_OK )
+        {
+            s = 0;
+        }
+        
+        free( buffer );
+        
+        fclose( fp );
+    }
+    
+    return s;
+}
+@endcode
+
+There are some situations where you'll want to create a sample in
+memory and decode into its buffer directly, such as loading an
+alternative file format such as AIFF or MP3.  For these circumstances
+you can use SAL_create_sample() and then retrieve a buffer pointer use
+SAL_get_sample_data().
+
+NOTE: samples must have the same sample rate as the device!  SAL does
+not include a resampling filter to up or downsample waveforms, however
+it does provide 8->16-bit up-converting, 16->8-bit quantization, and
+mono->stereo/stereo->mono conversions automatically.
+
+@section PlayingSound Playing a Sound
+
+Once a sample is loaded you may then play it.
+@code
+    sal_voice_t v;
+
+    SAL_play_sample( device,        /* pointer to device */
+                     sample,        /* pointer to sample */
+                     &v,            /* pointer to voice handle */
+                     0xFFFF,        /* volume, from 0 to 0xFFFF */
+                     -32768,        /* pan, from -32768 to +32767 */
+                     0,             /* loop start */
+                     0,             /* loop end (0=end of sample) */
+                     1 );           /* number of times to play sound, can be SAL_LOOP_ALWAYS */
+@endcode
+
+The voice handle returned by SAL_play_sample may be used to alter the
+sound later, e.g. change pan, volume, or stop, or to check its status.
+
+@section ShuttingDown Shutting Down
+
+When you're done with a device you need to destroy all current samples
+(these are not automatically destroyed for you) by calling
+_SAL_destroy_sample() and then SAL_destroy_device().
+
+*/
+
+/**
+@page SourceDistro
+
+You can download SAL from here:
+
+http://www.bookofhook.com/sal/distrib/sal.zip
+
+*/
+
+/**
+ @page BinaryDistro
+
+There are no binary distributions of SAL.  It's really, really not that
+hard to just compile it and add it to your project, we've done everything
+possible to make it drag-and-drop.
+
+*/
+
+/**
+ @page Architecture
+
+SAL is conceptually and architecturally very simple.  The underlying
+platform is expected to provide, at a minimum, the ability to play a
+single digital audio stream, of at least one channel in 8-bit or
+16-bit PCM format, asynchronously.
+
+@section ThreadArchitecture Threading Architecture
+Most of the platform implementations use a standard pattern where an
+audio feeder thread sleeps and awakens periodically (buffer_length x
+0.25), queries the platform for the number of bytes to feed to the
+audio subsystem, mixes down all playing voices, and then submits that
+buffer before going back to sleep.  It also checks for thread
+termination:
+
+@verbatim
+while ( 1 )
+{
+	lock();
+	if ( terminate_thread )
+	{
+	   unlock();
+	   return;
+	}
+	mix_voices_to_buffer();
+	unlock();
+	sleep( buffer_length_ms/4);
+}
+@endverbatim
+
+This isn't particularly efficient compared to pull-model, such as the
+CoreAudio implementation (which provides a callback to the audio
+system).  However pull-model is not available on all
+platforms/implementations.
+
+The other advantage of the thread model is that the application
+doesn't have to call a periodic update function.
+
+@section Latency Latency
+
+Latency is a problem with this architecture, since we're mixing and
+buffering into an intermediate stream which in turn is being copied
+into an underlying platform stream which in turn may be mixed into
+another device stream.  This indirection can accumulate to dozens or
+hundreds of milliseconds of latency.  Not much can be done about this
+-- the only real way to achieve reliable minimized latency is to go as
+close to the hardware as possible.
+
+*/
+
+/** @page License License
+
+SAL uses a straight BSD license:
+
+Copyright (c) 2004, Brian Hook
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+      copyright notice, this list of conditions and the following
+      disclaimer in the documentation and/or other materials provided
+      with the distribution.
+
+    * The names of this package'ss contributors contributors may not
+      be used to endorse or promote products derived from this
+      software without specific prior written permission.
+
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+*/
+
+/** @page Contributors Contributors
+brian hook: coding, design, testing, and documentation
+*/
+
+/** @page Contact Contact
+sal@bookofhook.com
+*/
+
+/**
+@page FAQ
+
+<b>Q1.) Arent't there other libraries that do the same thing?</b>
+
+To some degree, yes, but most of them are either very monolithic or have other
+issues with them.  Some ones to check out are:
+
+SDL_Mixer
+PortAudio
+OpenAL
+ALSA
+OSS
+DirectSound
+
+<b>Q2.) Why doesn't SAL support (this API/soundcard/whatever)?</b>
+
+Most likely because I don't have access to such a system.  Provide me
+one, and I'll look into it.  Or, better yet, feel free to make the
+appropriate changes and submit them as a patch.
+
+<b>Q3.) Why shouldn't I just use my operating system's native features?</b>
+
+Go ahead, it won't bother me at all.  The main advantages of SAL are simplicity
+and portability.  It is much easier to get a sound playing in SAL than it is to
+use, say, DirectSound natively.
+
+<b>Q4.) How did you create this documentation?</b>
+
+I wrote most of this documentation while simultaneously trying to
+figure out how to use <A HREF="http://www.doxygen.org">Doxygen</a>, an
+incredibly useful and helpful tool that creates cross-referenced
+documentation from source code comments.  
+
+*/
+/** @page Verified
+ 
+The following systems have successfully built and executed the SAL
+test program:
+<ul>
+<li>Gateway M505XL Pentium-M Notebook, RealTek AC97, Windows XP Pro, Microsoft Visual C++ 6.0, DX9/WAVEOUT</li>
+<li>Gateway M505XL Pentium-M Notebook, RealTek AC97, Windows XP Pro, Metrowerks MWCC 3.2.2, DX9/WAVEOUT</li>
+<li>Gateway M505XL Pentium-M Notebook, RealTek AC97, Windows XP Pro, Microsoft Visual Toolkit 2003 C++ Compiler (13.10.3077), DX9/WAVEOUT</li>
+<li>Gateway M505XL Pentium-M Notebook, RealTek AC97, Windows XP Pro, Cygwin/GCC, OSS (emulated)</li>
+<li>Athlon XP1500/VIA KT266A,SB-Live, Ark Linux (RH 2.4.* kernel), GCC 3.3.3, ALSA+OSS</li>
+<li>Apple G4-867,OS X 10.3,X-Code development tools, CoreAudio</li>
+</ul>
+*/
+
+/* ------- DOXYGEN STUFF -------------------------*/
+
+/** @defgroup Utility Utility */
+/** @defgroup Multithreading Multithreading
+    @ingroup Utility
+    
+    SAL expects mutices to be recursive, i.e. the same thread may lock the same
+    mutex multiple times (whereas a non-recursive mutex would incur a deadlock
+    if it attempted that).
+ */
+/** @defgroup SampleManagement Sample Management */
+/** @defgroup Implementations Implementation Specific */
+/** @defgroup Win32 Win32 
+    @ingroup Implementations 
+*/
+/** @defgroup osx OS X
+    @ingroup Implementations
+*/
+/** @defgroup extras extras
+    Extra functionality for SAL that is completely optional.
+    @todo Document
+*/
